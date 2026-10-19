@@ -60,7 +60,7 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ac);outline-off
 .hr i{font-style:normal;font-size:20px}
 .hr span,.hr em{font-style:normal;color:var(--mu);font-size:13px}
 .hr.cur{background:color-mix(in srgb,var(--ac) 16%,transparent)}
-.lv-green{--c:#2e9e5b}.lv-yellow{--c:#e6b800}.lv-orange{--c:#f0821e}.lv-red{--c:#d6342c}
+.lv-none{--c:#8a99a8}.lv-green{--c:#2e9e5b}.lv-yellow{--c:#e6b800}.lv-orange{--c:#f0821e}.lv-red{--c:#d6342c}
 .al{display:grid;gap:3px;padding:12px 14px 12px 12px;border-left:6px solid var(--c)}
 .al+.al{border-top:1px solid var(--ln)}
 .al .top{display:flex;align-items:center;gap:8px;font-weight:800}
@@ -117,7 +117,7 @@ button.day{width:100%;border:0;background:none;color:inherit;font:inherit;text-a
     <div class="find"><button id="agps" style="flex:1">📍 Aggiorna dalla mia posizione</button></div>
     <h2 class="h2" id="ad0">Oggi</h2><div class="days" id="al0"></div>
     <h2 class="h2" id="ad1">Domani</h2><div class="days" id="al1"></div>
-    <p class="note">Fonte: MeteoAlarm (EUMETNET). I livelli indicano intensità e ricorrenza dei fenomeni; per i dettagli e le zone di allerta locali consulta meteoam.it e il sito della Protezione Civile della tua regione.</p>
+    <p class="note">Fonte: Dipartimento della Protezione Civile (bollettino di criticità, 156 zone di allerta), dati rielaborati da Open Data Sicilia. Il bollettino è emesso di norma verso le 16:00; per i dettagli consulta il sito della Protezione Civile della tua regione.</p>
   </section>
 </main>
 <script>
@@ -313,13 +313,10 @@ function hourly(){
  $("hours").innerHTML=html;
 }
 
-const LV={2:["yellow","Giallo"],3:["orange","Arancione"],4:["red","Rosso"]};
-const TY={1:"Vento",2:"Neve/ghiaccio",3:"Temporali",4:"Nebbia",5:"Temperature alte",6:"Temperature basse",7:"Mareggiate",8:"Incendi boschivi",9:"Valanghe",10:"Pioggia",11:"Inondazioni",12:"Pioggia e inondazioni"};
 const norm=x=>(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
 const RT=o=>({timeZone:"Europe/Rome",...o});
 const ymd=d=>new Intl.DateTimeFormat("sv-SE",RT({})).format(d);
 const hm=d=>d.toLocaleString("it-IT",RT({weekday:"short",hour:"2-digit",minute:"2-digit"}));
-const par=(i,n)=>((i.parameter||[]).find(p=>p.valueName===n)||{}).value||"";
 let aloc=null;
 function mk(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
 function alertsGps(){
@@ -328,36 +325,53 @@ function alertsGps(){
  if(!navigator.geolocation)return fb("posizione non disponibile");
  navigator.geolocation.getCurrentPosition(p=>{aloc={lo:p.coords.longitude,la:p.coords.latitude,src:"posizione"};loadAlerts()},()=>fb("posizione non consentita, uso "+CITIES[sel][0]),{timeout:10000});
 }
+const RAW=["https://raw.githubusercontent.com/opendatasicilia/DPC-bollettini-criticita-idrogeologica-idraulica/main/data/","https://raw.githubusercontent.com/opendatasicilia/DPC-bollettini-criticita-idrogeologica-idraulica/main/"];
+let ZC=null,BASE=null;
+function parseCsv(t){const rows=[];let row=[],f="",q=false;
+ for(let i=0;i<t.length;i++){const c=t[i];
+  if(q){if(c==='"'){if(t[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+  else if(c==='"')q=true;
+  else if(c===","){row.push(f);f=""}
+  else if(c==="\n"||c==="\r"){if(c==="\r"&&t[i+1]==="\n")i++;row.push(f);f="";if(row.length>1||row[0])rows.push(row);row=[]}
+  else f+=c}
+ if(f||row.length){row.push(f);rows.push(row)}
+ const h=rows.shift().map(x=>x.trim().replace(/^\ufeff/,""));
+ return rows.map(r=>Object.fromEntries(h.map((k,i)=>[k,(r[i]||"").trim()])))}
+async function getCsv(name){
+ for(const b of(BASE?[BASE]:RAW)){try{const r=await fetch(b+name);if(r.ok){BASE=b;return parseCsv(await r.text())}}catch(e){}}
+ throw new Error("csv")}
+const lvl=t=>/ROSSA/i.test(t)?4:/ARANCIONE/i.test(t)?3:/GIALLA/i.test(t)?2:1;
+const LVN={1:["green","Verde"],2:["yellow","Giallo"],3:["orange","Arancione"],4:["red","Rosso"]};
+const RISK=[["avviso_idrogeologico","Rischio idrogeologico"],["avviso_temporali","Temporali"],["avviso_idraulico","Rischio idraulico"]];
 async function loadAlerts(extra){
  const{lo,la,src}=aloc;$("asub").textContent="Carico le allerte…";$("al0").replaceChildren();$("al1").replaceChildren();
  let a={};
- try{a=(await(await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=10&accept-language=it&lat="+la.toFixed(4)+"&lon="+lo.toFixed(4))).json()).address||{}}
- catch(e){$("asub").textContent="Impossibile ricavare la zona dalla posizione.";return}
+ try{a=(await(await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=14&accept-language=it&lat="+la.toFixed(4)+"&lon="+lo.toFixed(4))).json()).address||{}}
+ catch(e){$("asub").textContent="Impossibile ricavare il comune dalla posizione.";return}
  if(a.country_code!=="it"){$("asub").textContent="Le allerte sono disponibili solo per l’Italia (zona rilevata: "+(a.country||"sconosciuta")+").";return}
- const toks=[...new Set([a.state,a.county,a.province,a.state_district].filter(Boolean).flatMap(c=>norm(c).replace(/provincia (autonoma )?di |citta metropolitana di /g,"").split(/[\/\-,]/).map(x=>x.trim()).filter(x=>x.length>3)))];
- const inArea=z=>{const n=norm(z);return toks.some(t=>n.includes(t)||(n.length>3&&t.includes(n)))};
- let list;
- try{const r=await fetch("https://feeds.meteoalarm.org/api/v1/warnings/feeds-italy");if(!r.ok)throw 0;const j=await r.json();list=Array.isArray(j)?j:(j.warnings||[])}
- catch(e){$("asub").textContent="Servizio allerte non raggiungibile. Consulta meteoalarm.org o meteoam.it.";return}
- const items=[];
- list.forEach(w=>{const al=w.alert||w;if(al.msgType==="Cancel")return;
-  const infos=[].concat(al.info||[]);if(!infos.length)return;
-  const info=infos.find(i=>/^it/i.test(i.language||""))||infos[0];
-  const areas=[...new Set([].concat(info.area||[]).map(x=>x.areaDesc).filter(Boolean))];
-  if(!areas.some(inArea))return;
-  const lv=parseInt(par(info,"awareness_level"))||0;if(lv<2)return;
-  const on=new Date(info.onset||info.effective||al.sent),ex=new Date(info.expires);
-  if(isNaN(on)||isNaN(ex))return;
-  items.push({lv,ty:parseInt(par(info,"awareness_type"))||0,on,ex,areas})});
- $("asub").textContent="Zona: "+(a.state||"Italia")+" · "+(src==="posizione"?"dalla tua posizione":src)+(extra?" · "+extra:"");
+ let oggi,domani;
+ try{if(!ZC)ZC=await getCsv("zone_comuni.csv");[oggi,domani]=await Promise.all([getCsv("bollettino-oggi-zone-latest.csv"),getCsv("bollettino-domani-zone-latest.csv")])}
+ catch(e){$("asub").textContent="Dati della Protezione Civile non raggiungibili. Consulta mappe.protezionecivile.gov.it.";return}
+ const city=a.city||a.town||a.village||a.municipality||a.hamlet||"",nc=norm(city),st=norm(a.state||""),co=norm(a.county||"");
+ let c=ZC.filter(r=>norm(r.comune_nome)===nc);
+ if(c.length>1){const x=c.filter(r=>st&&(st.includes(norm(r.regione_nome).split("/")[0])||norm(r.regione_nome).includes(st)));if(x.length)c=x}
+ if(c.length>1&&co){const x=c.filter(r=>co.includes(norm(r.provincia_nome))||norm(r.provincia_nome).includes(co));if(x.length)c=x}
+ if(!c.length){$("asub").textContent="Comune non riconosciuto"+(city?" ("+city+")":"")+": non riesco a individuare la zona di allerta.";return}
+ const z=c[0];
+ $("asub").textContent="Zona: "+z.zona_nome+" ("+z.zona_codice+") · "+z.comune_nome+", "+z.regione_nome+" · "+(src==="posizione"?"dalla tua posizione":src)+(extra?" · "+extra:"");
  for(let k=0;k<2;k++){
   const d=new Date(Date.now()+k*864e5),day=ymd(d),box=$("al"+k);
   $("ad"+k).textContent=(k?"Domani · ":"Oggi · ")+d.toLocaleDateString("it-IT",RT({weekday:"long",day:"numeric",month:"long"}));
-  const hit=items.filter(x=>ymd(x.on)<=day&&ymd(new Date(x.ex-1))>=day).sort((p,q)=>q.lv-p.lv);
-  if(!hit.length){const c=mk("div","al lv-green"),t=mk("div","top");t.append(mk("span","chip","Verde"),mk("b",null,"Nessuna allerta prevista"));c.append(t);box.append(c);continue}
-  hit.forEach(x=>{const c=mk("div","al lv-"+LV[x.lv][0]),t=mk("div","top");
-   t.append(mk("span","chip",LV[x.lv][1]),mk("b",null,TY[x.ty]||"Allerta meteo"));
-   c.append(t,mk("span",null,"Da "+hm(x.on)+" a "+hm(x.ex)),mk("span",null,"Zone: "+x.areas.join(", ")));box.append(c)});
+  let best=null;
+  [oggi,domani].forEach(rows=>{const r=rows.find(x=>x.zona_codice===z.zona_codice);
+   if(r&&ymd(new Date(r.data_validita_inizio))===day&&(!best||r.data_pubblicazione>best.data_pubblicazione))best=r});
+  if(!best){const e=mk("div","al lv-none"),t=mk("div","top");t.append(mk("b",null,"Bollettino non ancora disponibile"));e.append(t,mk("span",null,"Il Dipartimento lo pubblica di norma verso le 16:00."));box.append(e);continue}
+  const when="Da "+hm(new Date(best.data_validita_inizio))+" a "+hm(new Date(best.data_validita_fine)),zone="Zona: "+z.zona_nome+" ("+z.zona_codice+")";
+  const hit=RISK.map(([f,n])=>({n,t:best[f]||"",lv:lvl(best[f]||"")})).filter(x=>x.lv>1).sort((p,q)=>q.lv-p.lv);
+  if(!hit.length){const e=mk("div","al lv-green"),t=mk("div","top");t.append(mk("span","chip","Verde"),mk("b",null,"Nessuna allerta prevista"));e.append(t,mk("span",null,when),mk("span",null,zone));box.append(e);continue}
+  hit.forEach(x=>{const e=mk("div","al lv-"+LVN[x.lv][0]),t=mk("div","top");
+   t.append(mk("span","chip",LVN[x.lv][1]),mk("b",null,x.n));
+   e.append(t,mk("span",null,"Criticità "+x.t.split("/")[0].trim().toLowerCase()),mk("span",null,when),mk("span",null,zone));box.append(e)});
  }
 }
 $("agps").onclick=alertsGps;
