@@ -328,6 +328,7 @@ const ymd=d=>new Intl.DateTimeFormat("sv-SE",RT({})).format(d);
 const hm=d=>d.toLocaleString("it-IT",RT({weekday:"short",hour:"2-digit",minute:"2-digit"}));
 let aloc=null,aKey=null;
 const fts=d=>d.toLocaleDateString("it-IT",RT({day:"2-digit",month:"2-digit",year:"numeric"}))+" alle "+d.toLocaleTimeString("it-IT",RT({hour:"2-digit",minute:"2-digit"}));
+const fd=x=>{const d=new Date(x);return isNaN(d)?"?":fts(d)};
 function updMeteo(){$("mupd").textContent=(WT?"Previsioni aggiornate il "+fts(WT):"Dati dimostrativi: nessun aggiornamento riuscito")+(RADT?" · Radar: ultimo fotogramma del "+fts(RADT):"")}
 async function refreshMeteo(){const b=$("mref");b.disabled=true;b.textContent="Aggiorno…";NB.clear();try{await Promise.all([load(),loadRadar()])}finally{b.disabled=false;b.textContent="🔄 Aggiorna dati"}}
 function alertsCity(){const c=CITIES[sel];aloc={lo:c[1],la:c[2],src:c[0]};loadAlerts()}
@@ -356,7 +357,7 @@ function parseCsv(t){const rows=[];let row=[],f="",q=false;
  return rows.map(r=>Object.fromEntries(h.map((k,i)=>[k,(r[i]||"").trim()])))}
 async function getCsv(name){
  for(const b of(BASE?[BASE]:RAW)){try{const r=await FETCH_T(b+name);if(r.ok){BASE=b;return parseCsv(await r.text())}}catch(e){}}
- throw new Error("csv")}
+ throw new Error("file "+name+" non raggiungibile")}
 const lvl=t=>/ROSSA/i.test(t)?4:/ARANCIONE/i.test(t)?3:/GIALLA/i.test(t)?2:1;
 const LVN={1:["green","Verde"],2:["yellow","Giallo"],3:["orange","Arancione"],4:["red","Rosso"]};
 const RISK=[["avviso_idrogeologico","Rischio idrogeologico"],["avviso_temporali","Temporali"],["avviso_idraulico","Rischio idraulico"]];
@@ -443,7 +444,7 @@ async function viaAllertaMeteo(a,city){
  const zone="Zona: "+(d.zona||"n.d.");
  return{sub:zone+" · "+d.comune+", "+d.regione,zone,when:"Bollettino"+(bi.data_bollettino?" del "+bi.data_bollettino:"")+(bi.ora_bollettino?" ore "+bi.ora_bollettino:""),days,valid,src:"allertameteo.app (dati DPC)",stale:false,fetched:Date.now()}}
 function renderAlerts(R,extra,src){
- $("aupd").textContent="Dati recuperati il "+fts(new Date(R.fetched))+" · "+R.when+(R.stale?" · copia salvata: la fonte non rispondeva":"");
+ $("aupd").textContent="Dati recuperati il "+fts(new Date(R.fetched))+" · "+R.when+(R.stale?" · copia salvata: la fonte non rispondeva":"")+(R.errs&&R.errs.length?" · Fonte ufficiale non disponibile ("+R.errs.join(" · ")+")":"");
  $("asub").textContent=R.sub+" · "+(src==="posizione"?"dalla tua posizione":"città selezionata: "+src)+(extra?" · "+extra:"")+" · fonte: "+R.src+(R.stale?" (dati in cache, possibile ritardo)":"");
  for(let k=0;k<2;k++){
   const d=new Date(Date.now()+k*864e5),box=$("al"+k),items=R.days[k];
@@ -463,6 +464,7 @@ async function loadAlerts(extra){
  const city=a.city||a.town||a.village||a.municipality||a.hamlet||"";
  const errs=[];let R=null;
  try{R=await viaDpc(a,city)}catch(e){errs.push("DPC: "+(e.message||"errore"))}
+ if(!R)try{R=await viaMirror(a,city)}catch(e){errs.push("copia Open Data Sicilia: "+(e.message||"errore"))}
  if(!R)try{R=await viaAllertaMeteo(a,city)}catch(e){errs.push("allertameteo.app: "+(e.message||"errore"))}
  if(!R){
   $("aupd").textContent="Ultimo tentativo il "+fts(new Date())+": non riuscito.";
@@ -470,8 +472,8 @@ async function loadAlerts(extra){
   const e=mk("div","al lv-none"),t=mk("div","top"),l=mk("a",null,"mappe.protezionecivile.gov.it");
   t.append(mk("b",null,"Consulta la fonte ufficiale"));l.href="https://mappe.protezionecivile.gov.it/it/mappe-rischi/bollettino-di-criticita/";l.target="_blank";l.rel="noopener";
   e.append(t,l);$("al0").append(e);return}
- renderAlerts(R,extra,src);
- showAlertMap(null,true,R.src.indexOf("allertameteo")>=0)}
+ R.errs=errs;renderAlerts(R,extra,src);
+ showAlertMap(null,true)}
 // ---- Zone in allerta sulla mappa
 const ALC={2:"#e6b800",3:"#f0821e",4:"#d6342c"};
 let ALG=null,ZG=null,CM=null,ALD=0,ALT=0,AM=null;const TJC=new Map();
@@ -511,35 +513,89 @@ function zoneInfo(p,items){
  const r={};best.hits.forEach(h=>{if(!r[h.n]||h.lv>r[h.n].lv)r[h.n]={n:h.n,lv:h.lv}});
  const risks=Object.values(r).sort((a,b)=>b.lv-a.lv);
  return{lv:risks[0].lv,name:best.v,direct:[],risks}}
-async function showAlertMap(k,reset,skip){
+const GEO_FALLBACK="https://raw.githubusercontent.com/pcm-dpc/DPC-Bollettini-Criticita-Idrogeologica-Idraulica/master/files/topojson/20260914_1411_today.json";
+const RKM={avviso_idrogeologico:"Rischio idrogeologico",avviso_temporali:"Temporali",avviso_idraulico:"Rischio idraulico"};
+const MIRC=new Map();
+async function mirrorCsv(nm){const c=MIRC.get(nm);if(c&&!FORCE&&Date.now()-c.t<10*60e3)return c.r;const r=await getCsv(nm);MIRC.set(nm,{t:Date.now(),r});return r}
+async function mirrorRows(day){
+ let err=null;
+ for(const nm of["bollettino-oggi-zone-latest.csv","bollettino-domani-zone-latest.csv"]){
+  try{const rows=await mirrorCsv(nm);if(rows.length&&String(rows[0].data_validita_inizio||"").slice(0,10)===day)return rows}catch(e){err=e}}
+ throw err||new Error("bollettino non ancora disponibile")}
+async function getFeats(url){
+ let f=TJC.get(url);if(f)return f;
+ const r=await FETCH_T(url,25000);if(!r.ok)throw new Error("zone: HTTP "+r.status);
+ const t=await r.json();f=t.type==="FeatureCollection"?t.features:topo2geo(t);TJC.set(url,f);return f}
+function findComune(a,city){
+ const nc=norm(city),st=norm(a.state||""),co=norm(a.county||"");
+ let c=ZC.filter(r=>norm(r.comune_nome)===nc);
+ if(c.length>1){const x=c.filter(r=>st&&(st.includes(norm(r.regione_nome).split("/")[0])||norm(r.regione_nome).includes(st)));if(x.length)c=x}
+ if(c.length>1&&co){const x=c.filter(r=>co.includes(norm(r.provincia_nome))||norm(r.provincia_nome).includes(co));if(x.length)c=x}
+ if(!c.length)throw new Error("comune non riconosciuto"+(city?" ("+city+")":""));
+ return c[0]}
+async function viaMirror(a,city){
+ if(!ZC)ZC=await getCsv("zone_comuni.csv");
+ const z=findComune(a,city);let pub="";const valid=[];
+ const days=[0,1].map(()=>null);
+ for(let k=0;k<2;k++){
+  const day=ymd(new Date(Date.now()+k*864e5));let rows=null;
+  try{rows=await mirrorRows(day)}catch(e){}
+  const r=rows&&rows.find(x=>x.zona_codice===z.zona_codice);
+  valid[k]="";if(!r)continue;
+  if(!pub)pub=r.data_pubblicazione||"";
+  const items=[];Object.keys(RKM).forEach(f=>{const t=String(r[f]||""),lv=lvl(t);if(lv>1)items.push({n:RKM[f],t:(t.match(/^\s*(\w+)/)||[,""])[1],lv,approx:false})});
+  days[k]=items.sort((p,q)=>q.lv-p.lv);
+  valid[k]="Valida dal "+fd(r.data_validita_inizio)+" al "+fd(r.data_validita_fine)}
+ if(days.every(d=>d===null))throw new Error("bollettino non disponibile");
+ const zone="Zona: "+z.zona_nome+" ("+z.zona_codice+")";
+ return{sub:zone+" · "+z.comune_nome+", "+z.regione_nome,zone,when:pub?"Bollettino pubblicato il "+fd(pub):"Bollettino",days,valid,src:"Open Data Sicilia (copia dei dati DPC, fino a 4 ore di ritardo)",stale:false,fetched:Date.now()}}
+function zoneInfoCsv(p,rc,rn,cn){
+ const vals=Object.values(p).filter(v=>typeof v==="string"||typeof v==="number").map(String);
+ const first=vals.find(v=>v.length>2&&v.length<90)||"Zona";let row=null;
+ for(const v of vals){const c=v.trim().toLowerCase();if(rc[c]){row=rc[c];break}if(rn[nz(v)]){row=rn[nz(v)];break}}
+ if(!row)return{lv:0,name:first,direct:[],risks:[]};
+ const risks=[];Object.keys(RKM).forEach(f=>{const lv=lvl(String(row[f]||""));if(lv>1)risks.push({n:RKM[f],lv})});
+ risks.sort((x,y)=>y.lv-x.lv);
+ return{lv:risks.length?risks[0].lv:0,name:cn[(row.zona_codice||"").toLowerCase()]||first,direct:[],risks}}
+async function mapSourceOfficial(k){
+ const J=await latestBulletin();
+ const day=ymd(new Date(Date.now()+k*864e5)),iss=ymd(new Date(J.date)),nxt=ymd(new Date(new Date(J.date).getTime()+864e5));
+ const sec=day===iss?J.today:day===nxt?J.tomorrow:null;
+ if(!sec||!sec.topo_json)throw new Error("bollettino non ancora disponibile (di norma verso le 16:00)");
+ const feats=await getFeats(sec.topo_json),items=parseDesc(sec.html_descrition||"");
+ return{feats,info:f=>zoneInfo(f.properties||{},items),empty:!items.length,label:J.name+(J._stale?" · copia salvata":""),mirror:false}}
+async function mapSourceMirror(k){
+ const day=ymd(new Date(Date.now()+k*864e5)),rows=await mirrorRows(day);
+ let zc=ZC;if(!zc){try{zc=ZC=await getCsv("zone_comuni.csv")}catch(e){zc=[]}}
+ const rc={},rn={},cn={};rows.forEach(r=>{rc[(r.zona_codice||"").toLowerCase()]=r});
+ zc.forEach(z=>{const c=(z.zona_codice||"").toLowerCase();if(c){cn[c]=z.zona_nome;if(rc[c])rn[nz(z.zona_nome)]=rc[c]}});
+ const feats=await getFeats(GEO_FALLBACK);
+ const empty=!rows.some(r=>Object.keys(RKM).some(f=>lvl(String(r[f]||""))>1));
+ return{feats,info:f=>zoneInfoCsv(f.properties||{},rc,rn,cn),empty,label:"bollettino del "+fd(rows[0].data_pubblicazione),mirror:true}}
+async function showAlertMap(k,reset){
  if(k!=null)ALD=k;k=ALD;
  const m=$("almsg"),my=++ALT,am=ensureAMap();
  [ALG,ZG,CM].forEach(l=>{if(l)am.removeLayer(l)});ALG=ZG=CM=null;
  if(reset&&aloc)am.setView([aloc.la,aloc.lo],9);
  am.invalidateSize();
  try{
-  if(skip){m.textContent="Mappa delle zone non disponibile con la fonte di riserva: serve il bollettino ufficiale della Protezione Civile.";return}
   m.textContent="Carico le zone in allerta…";
-  const J=await latestBulletin();if(my!==ALT)return;
-  const day=ymd(new Date(Date.now()+k*864e5)),iss=ymd(new Date(J.date)),nxt=ymd(new Date(new Date(J.date).getTime()+864e5));
-  const sec=day===iss?J.today:day===nxt?J.tomorrow:null;
-  if(!sec||!sec.topo_json){m.textContent="Bollettino non ancora disponibile per questo giorno (di norma verso le 16:00).";return}
-  let feats=TJC.get(sec.topo_json);
-  if(!feats){const r=await FETCH_T(sec.topo_json,25000);if(!r.ok)throw new Error("HTTP "+r.status);const t=await r.json();feats=t.type==="FeatureCollection"?t.features:topo2geo(t);TJC.set(sec.topo_json,feats)}
+  let S;
+  try{S=await mapSourceOfficial(k)}catch(e1){
+   try{S=await mapSourceMirror(k)}catch(e2){throw new Error("fonte ufficiale: "+(e1.message||"errore")+" · copia: "+(e2.message||"errore"))}}
   if(my!==ALT)return;
-  const items=parseDesc(sec.html_descrition||"");
-  const fl=[];feats.forEach(f=>{const z=zoneInfo(f.properties||{},items);if(z.lv>1)fl.push({type:"Feature",geometry:f.geometry,properties:{z}})});
+  const fl=[];S.feats.forEach(f=>{const z=S.info(f);if(z.lv>1)fl.push({type:"Feature",geometry:f.geometry,properties:{z}})});
   if(fl.length)ALG=L.geoJSON({type:"FeatureCollection",features:fl},{pane:"alerts",
    style:f=>{const c=ALC[f.properties.z.lv];return{color:c,weight:1.5,fillColor:c,fillOpacity:.4}},
    onEachFeature:(f,l)=>{const z=f.properties.z,d=document.createElement("div"),b=document.createElement("b");b.textContent=z.name;d.append(b);
     (z.risks.length?z.risks.map(x=>x.n+": "+LVN[x.lv][1]):z.direct).forEach(x=>{const s=document.createElement("div");s.textContent=x;d.append(s)});l.bindPopup(d)}}).addTo(am);
-  const uf=aloc?feats.find(f=>inGeom(f.geometry,aloc.lo,aloc.la)):null;
+  const uf=aloc?S.feats.find(f=>inGeom(f.geometry,aloc.lo,aloc.la)):null;
   if(uf)ZG=L.geoJSON(uf,{pane:"alerts",style:{color:"#2a6496",weight:2.5,dashArray:"5 4",fill:false},interactive:false}).addTo(am);
-  const tail=(uf?" · tratteggio: zona del comune":"")+(J._stale?" · copia salvata":"");
-  if(fl.length)m.textContent=fl.length+" zone in allerta · "+J.name+" · 🟨 gialla 🟧 arancione 🟥 rossa"+tail;
-  else if(!items.length)m.textContent="Nessuna allerta in questo giorno: nessuna zona da colorare. "+J.name+tail;
-  else{m.textContent="Il bollettino riporta allerte, ma non riesco a riconoscere le zone nel file della mappa: vedi l'elenco qui sotto."+tail;try{console.log("Esempio proprietà zona:",feats[0]&&feats[0].properties)}catch(e){}}
- }catch(e){if(my===ALT)m.textContent="Zone in allerta non disponibili ("+(e.message||"errore")+"). La mappa usa il bollettino ufficiale della Protezione Civile."}
+  const tail=(uf?" · tratteggio: zona del comune":"")+(S.mirror?" · dati da copia, possibile ritardo":"");
+  if(fl.length)m.textContent=fl.length+" zone in allerta · "+S.label+" · 🟨 gialla 🟧 arancione 🟥 rossa"+tail;
+  else if(S.empty)m.textContent="Nessuna allerta in questo giorno: nessuna zona da colorare. "+S.label+tail;
+  else{m.textContent="Il bollettino riporta allerte, ma non riesco a riconoscere le zone nel file della mappa: vedi l'elenco qui sotto."+tail;try{console.log("Esempio proprietà zona:",S.feats[0]&&S.feats[0].properties)}catch(e){}}
+ }catch(e){if(my===ALT)m.textContent="Zone in allerta non disponibili ("+(e.message||"errore")+")."}
  finally{if(my===ALT&&aloc)CM=L.circleMarker([aloc.la,aloc.lo],{pane:"alerts",radius:7,color:"#fff",weight:2,fillColor:"#2a6496",fillOpacity:1,interactive:false}).addTo(am)}}
 $("alseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;
  document.querySelectorAll("#alseg button").forEach(x=>x.setAttribute("aria-pressed",x===b));
