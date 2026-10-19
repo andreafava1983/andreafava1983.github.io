@@ -98,6 +98,12 @@ button.day{width:100%;border:0;background:none;color:inherit;font:inherit;text-a
   </div>
   <div class="leg" id="leg"></div>
   <div class="legt"><span id="l0"></span><span id="l1"></span></div>
+  <div class="seg" id="alseg" role="group" aria-label="Zone in allerta sulla mappa">
+    <button data-a="off" aria-pressed="true">Senza allerte</button>
+    <button data-a="0" aria-pressed="false">⚠️ Allerte oggi</button>
+    <button data-a="1" aria-pressed="false">⚠️ Allerte domani</button>
+  </div>
+  <p class="note" id="almsg" aria-live="polite" style="margin:0 0 6px"></p>
 
   <div class="seg" id="dayseg" role="group" aria-label="Giorno"></div>
   <div class="tl">
@@ -323,7 +329,7 @@ const hm=d=>d.toLocaleString("it-IT",RT({weekday:"short",hour:"2-digit",minute:"
 let aloc=null,aKey=null;
 const fts=d=>d.toLocaleDateString("it-IT",RT({day:"2-digit",month:"2-digit",year:"numeric"}))+" alle "+d.toLocaleTimeString("it-IT",RT({hour:"2-digit",minute:"2-digit"}));
 function updMeteo(){$("mupd").textContent=(WT?"Previsioni aggiornate il "+fts(WT):"Dati dimostrativi: nessun aggiornamento riuscito")+(RADT?" · Radar: ultimo fotogramma del "+fts(RADT):"")}
-async function refreshMeteo(){const b=$("mref");b.disabled=true;b.textContent="Aggiorno…";NB.clear();try{await Promise.all([load(),loadRadar()])}finally{b.disabled=false;b.textContent="🔄 Aggiorna dati"}}
+async function refreshMeteo(){const b=$("mref");b.disabled=true;b.textContent="Aggiorno…";NB.clear();try{await Promise.all([load(),loadRadar()]);if(ALK!==null){FORCE=true;TJC.clear();try{await showAlertMap(ALK)}finally{FORCE=false}}}finally{b.disabled=false;b.textContent="🔄 Aggiorna dati"}}
 function alertsCity(){const c=CITIES[sel];aloc={lo:c[1],la:c[2],src:c[0]};loadAlerts()}
 async function refreshAlerts(){const b=$("aref");if(!aloc){alertsCity();return}b.disabled=true;b.textContent="Aggiorno…";FORCE=true;try{await loadAlerts()}finally{FORCE=false;b.disabled=false;b.textContent="🔄 Aggiorna dati"}}
 function mk(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
@@ -465,6 +471,64 @@ async function loadAlerts(extra){
   t.append(mk("b",null,"Consulta la fonte ufficiale"));l.href="https://mappe.protezionecivile.gov.it/it/mappe-rischi/bollettino-di-criticita/";l.target="_blank";l.rel="noopener";
   e.append(t,l);$("al0").append(e);return}
  renderAlerts(R,extra,src)}
+// ---- Zone in allerta sulla mappa
+const ALC={2:"#e6b800",3:"#f0821e",4:"#d6342c"};
+let ALG=null,ALK=null,ALT=0;const TJC=new Map();
+map.createPane("alerts");map.getPane("alerts").style.zIndex=450;
+function topo2geo(t){
+ const tr=t.transform,A=t.arcs.map(a=>{let x=0,y=0;return a.map(p=>{if(tr){x+=p[0];y+=p[1];return[x*tr.scale[0]+tr.translate[0],y*tr.scale[1]+tr.translate[1]]}return[p[0],p[1]]})});
+ const arc=i=>i<0?A[~i].slice().reverse():A[i];
+ const ring=r=>{let o=[];r.forEach((i,k)=>{const a=arc(i);o=o.concat(k?a.slice(1):a)});return o};
+ const geom=g=>g.type==="Polygon"?{type:"Polygon",coordinates:g.arcs.map(ring)}:g.type==="MultiPolygon"?{type:"MultiPolygon",coordinates:g.arcs.map(p=>p.map(ring))}:null;
+ const out=[];
+ const walk=g=>{if(g.type==="GeometryCollection")(g.geometries||[]).forEach(walk);else{const m=geom(g);if(m)out.push({type:"Feature",properties:g.properties||{},geometry:m})}};
+ Object.values(t.objects||{}).forEach(walk);return out}
+const cl=v=>{v=String(v).trim().toLowerCase();if(v.length>80)return 0;const m=v.match(/^(?:allerta\s+)?(rossa|rosso|arancione|gialla|giallo)$|allerta\s+(rossa|rosso|arancione|gialla|giallo)\s*$/);if(!m)return 0;const c=m[1]||m[2];return c[0]==="r"?4:c[0]==="a"?3:2};
+function zoneInfo(p,items){
+ const vals=Object.values(p).filter(v=>typeof v==="string"||typeof v==="number").map(String);
+ const direct=vals.filter(v=>cl(v)>0);
+ const first=vals.find(v=>v.length>2&&v.length<90&&!cl(v))||"Zona";
+ if(direct.length)return{lv:Math.max(...direct.map(cl)),name:first,direct,risks:[]};
+ const regs=[...new Set(items.map(i=>nz(i.region)))];
+ const cand=vals.filter(v=>v.length>2&&v.length<90);
+ const preg=cand.map(nz).find(c=>regs.includes(c));
+ let best=null;
+ cand.forEach(v=>{const c=nz(v),ex=new RegExp("(^|, )"+c.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(, |$)");
+  const hits=items.filter(i=>(!preg||nz(i.region)===preg)&&ex.test(nz(i.zones)));
+  if(!hits.length||new Set(hits.map(h=>nz(h.region))).size>1)return;
+  if(!best||c.length>best.c.length)best={c,v,hits}});
+ if(!best)return{lv:0,name:first,direct:[],risks:[]};
+ const r={};best.hits.forEach(h=>{if(!r[h.n]||h.lv>r[h.n].lv)r[h.n]={n:h.n,lv:h.lv}});
+ const risks=Object.values(r).sort((a,b)=>b.lv-a.lv);
+ return{lv:risks[0].lv,name:best.v,direct:[],risks}}
+async function showAlertMap(k){
+ const m=$("almsg"),my=++ALT;ALK=k;
+ if(ALG){map.removeLayer(ALG);ALG=null}
+ if(k===null){m.textContent="";return}
+ m.textContent="Carico le zone in allerta…";
+ try{
+  const J=await latestBulletin();if(my!==ALT)return;
+  const day=ymd(new Date(Date.now()+k*864e5)),iss=ymd(new Date(J.date)),nxt=ymd(new Date(new Date(J.date).getTime()+864e5));
+  const sec=day===iss?J.today:day===nxt?J.tomorrow:null;
+  if(!sec||!sec.topo_json){m.textContent="Bollettino non ancora disponibile per questo giorno (di norma verso le 16:00).";return}
+  let feats=TJC.get(sec.topo_json);
+  if(!feats){const r=await FETCH_T(sec.topo_json,25000);if(!r.ok)throw new Error("HTTP "+r.status);const t=await r.json();feats=t.type==="FeatureCollection"?t.features:topo2geo(t);TJC.set(sec.topo_json,feats)}
+  if(my!==ALT)return;
+  const items=parseDesc(sec.html_descrition||"");
+  const fl=[];feats.forEach(f=>{const z=zoneInfo(f.properties||{},items);if(z.lv>1)fl.push({type:"Feature",geometry:f.geometry,properties:{z}})});
+  if(!fl.length){
+   if(!items.length)m.textContent="Nessuna allerta in questo giorno: nessuna zona da colorare. "+J.name;
+   else{m.textContent="Il bollettino riporta allerte, ma non riesco a riconoscere le zone nel file della mappa. Consulta l'elenco nella pagina Allerte.";try{console.log("Esempio proprietà zona:",feats[0]&&feats[0].properties)}catch(e){}}
+   return}
+  ALG=L.geoJSON({type:"FeatureCollection",features:fl},{pane:"alerts",
+   style:f=>{const c=ALC[f.properties.z.lv];return{color:c,weight:1.5,fillColor:c,fillOpacity:.4}},
+   onEachFeature:(f,l)=>{const z=f.properties.z,d=document.createElement("div"),b=document.createElement("b");b.textContent=z.name;d.append(b);
+    (z.risks.length?z.risks.map(x=>x.n+": "+LVN[x.lv][1]):z.direct).forEach(x=>{const s=document.createElement("div");s.textContent=x;d.append(s)});l.bindPopup(d)}}).addTo(map);
+  m.textContent=fl.length+" zone in allerta · "+J.name+(J._stale?" (copia salvata)":"")+" · 🟨 gialla 🟧 arancione 🟥 rossa"
+ }catch(e){if(my===ALT)m.textContent="Zone in allerta non disponibili ("+(e.message||"errore")+"). Il livello mappa richiede il bollettino ufficiale della Protezione Civile."}}
+$("alseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;
+ document.querySelectorAll("#alseg button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+ showAlertMap(b.dataset.a==="off"?null:+b.dataset.a)};
 $("agps").onclick=alertsGps;$("aref").onclick=refreshAlerts;$("mref").onclick=refreshMeteo;
 $("tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;const al=b.dataset.v==="all";
  document.querySelectorAll("#tabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));
