@@ -117,7 +117,7 @@ button.day{width:100%;border:0;background:none;color:inherit;font:inherit;text-a
     <div class="find"><button id="agps" style="flex:1">📍 Aggiorna dalla mia posizione</button></div>
     <h2 class="h2" id="ad0">Oggi</h2><div class="days" id="al0"></div>
     <h2 class="h2" id="ad1">Domani</h2><div class="days" id="al1"></div>
-    <p class="note">Fonte: Dipartimento della Protezione Civile (bollettino di criticità, 156 zone di allerta), bollettino dal repository ufficiale del DPC, associazione comune-zona da Open Data Sicilia. Il bollettino è emesso di norma verso le 16:00; per i dettagli consulta il sito della Protezione Civile della tua regione.</p>
+    <p class="note">Fonte: Dipartimento della Protezione Civile (bollettino di criticità, 156 zone di allerta), dal repository ufficiale del DPC. Se non raggiungibile, riserva: allertameteo.app (progetto indipendente che ripubblica gli stessi bollettini). Il bollettino è emesso di norma verso le 16:00; per i dettagli consulta il sito della Protezione Civile della tua regione.</p>
   </section>
 </main>
 <script>
@@ -325,7 +325,9 @@ function alertsGps(){
  if(!navigator.geolocation)return fb("posizione non disponibile");
  navigator.geolocation.getCurrentPosition(p=>{aloc={lo:p.coords.longitude,la:p.coords.latitude,src:"posizione"};loadAlerts()},()=>fb("posizione non consentita, uso "+CITIES[sel][0]),{timeout:10000});
 }
-const RAW=["https://raw.githubusercontent.com/opendatasicilia/DPC-bollettini-criticita-idrogeologica-idraulica/main/data/","https://raw.githubusercontent.com/opendatasicilia/DPC-bollettini-criticita-idrogeologica-idraulica/main/"];
+const FETCH_T=(u,ms=9000)=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);return fetch(u,{signal:c.signal}).finally(()=>clearTimeout(t))};
+const OD="opendatasicilia/DPC-bollettini-criticita-idrogeologica-idraulica";
+const RAW=["https://raw.githubusercontent.com/"+OD+"/main/data/","https://raw.githubusercontent.com/"+OD+"/main/","https://cdn.jsdelivr.net/gh/"+OD+"@main/data/","https://cdn.jsdelivr.net/gh/"+OD+"@main/"];
 let ZC=null,BASE=null;
 function parseCsv(t){const rows=[];let row=[],f="",q=false;
  for(let i=0;i<t.length;i++){const c=t[i];
@@ -338,7 +340,7 @@ function parseCsv(t){const rows=[];let row=[],f="",q=false;
  const h=rows.shift().map(x=>x.trim().replace(/^\ufeff/,""));
  return rows.map(r=>Object.fromEntries(h.map((k,i)=>[k,(r[i]||"").trim()])))}
 async function getCsv(name){
- for(const b of(BASE?[BASE]:RAW)){try{const r=await fetch(b+name);if(r.ok){BASE=b;return parseCsv(await r.text())}}catch(e){}}
+ for(const b of(BASE?[BASE]:RAW)){try{const r=await FETCH_T(b+name);if(r.ok){BASE=b;return parseCsv(await r.text())}}catch(e){}}
  throw new Error("csv")}
 const lvl=t=>/ROSSA/i.test(t)?4:/ARANCIONE/i.test(t)?3:/GIALLA/i.test(t)?2:1;
 const LVN={1:["green","Verde"],2:["yellow","Giallo"],3:["orange","Arancione"],4:["red","Rosso"]};
@@ -348,18 +350,24 @@ const DPC="https://raw.githubusercontent.com/pcm-dpc/DPC-Bollettini-Criticita-Id
 const DPCAPI="https://api.github.com/repos/pcm-dpc/DPC-Bollettini-Criticita-Idrogeologica-Idraulica/";
 const nz=x=>norm(x).replace(/[\u2019\u2018`]/g,"'").replace(/[-\u2013]/g," ").replace(/\s+/g," ").trim();
 async function latestBulletin(){
- try{const c=JSON.parse(localStorage.getItem("dpcb")||"null");if(c&&Date.now()-c.t<15*60e3)return c.j}catch(e){}
- const cm=await(await fetch(DPCAPI+"commits?per_page=8")).json();
- if(!Array.isArray(cm))throw new Error("gh");
- for(const m of cm){
-  const d=await(await fetch(DPCAPI+"commits/"+m.sha)).json();
-  const f=(d.files||[]).map(x=>x.filename).find(n=>/^files\/\d{8}_\d{4}\.json$/.test(n));
-  if(!f)continue;
-  const r=await fetch(DPC+f.slice(6));if(!r.ok)throw new Error("raw");
-  const j=await r.json();
-  try{localStorage.setItem("dpcb",JSON.stringify({t:Date.now(),j}))}catch(e){}
-  return j}
- throw new Error("nobulletin")}
+ let st=null;
+ try{const c=JSON.parse(localStorage.getItem("dpcb")||"null");if(c){if(Date.now()-c.t<15*60e3)return c.j;st=c}}catch(e){}
+ const save=j=>{try{localStorage.setItem("dpcb",JSON.stringify({t:Date.now(),j}))}catch(e){}return j};
+ try{
+  const cm=await(await FETCH_T(DPCAPI+"commits?per_page=8&path=files")).json();
+  if(!Array.isArray(cm))throw new Error("limite richieste GitHub");
+  for(const m of cm){
+   const hint=((m.commit&&m.commit.message)||"").match(/\d{8}_\d{4}/);
+   if(hint){try{const r=await FETCH_T(DPC+hint[0]+".json");if(r.ok)return save(await r.json())}catch(e){}}
+   const d=await(await FETCH_T(DPCAPI+"commits/"+m.sha)).json();
+   const f=(d.files||[]).map(x=>x.filename).find(n=>/^files\/\d{8}_\d{4}\.json$/.test(n));
+   if(!f)continue;
+   const r=await FETCH_T(DPC+f.slice(6));if(!r.ok)throw new Error("raw "+r.status);
+   return save(await r.json())}
+  throw new Error("nessun bollettino trovato")
+ }catch(e){
+  if(st&&Date.now()-st.t<36*36e5){st.j._stale=true;return st.j}
+  throw e}}
 const RISKN={IDROGEOLOGICO:"Rischio idrogeologico",TEMPORALI:"Temporali",IDRAULICO:"Rischio idraulico"};
 function parseDesc(h){
  const out=[],re=/<b>([^<]*)<\/b>(?:<br\s*\/?>)?(?::\s*([^<]*))?/g;let m,cur=null;
@@ -369,44 +377,80 @@ function parseDesc(h){
    cur=rk&&RISKN[rk.toUpperCase()]?{n:RISKN[rk.toUpperCase()],lv:lvl(m[1]),t:(m[1].match(/^\s*(\w+)/)||[,""])[1]}:null}
   else if(cur&&m[2]!=null)out.push({...cur,region:m[1],zones:m[2]})}
  return out}
-async function loadAlerts(extra){
- const{lo,la,src}=aloc;$("asub").textContent="Carico le allerte…";$("al0").replaceChildren();$("al1").replaceChildren();
- let a={};
- try{a=(await(await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=14&accept-language=it&lat="+la.toFixed(4)+"&lon="+lo.toFixed(4))).json()).address||{}}
- catch(e){$("asub").textContent="Impossibile ricavare il comune dalla posizione.";return}
- if(a.country_code!=="it"){$("asub").textContent="Le allerte sono disponibili solo per l’Italia (zona rilevata: "+(a.country||"sconosciuta")+").";return}
- let J;
- try{if(!ZC)ZC=await getCsv("zone_comuni.csv")}
- catch(e){$("asub").textContent="Elenco comuni/zone non raggiungibile (Open Data Sicilia). Consulta mappe.protezionecivile.gov.it.";return}
- try{J=await latestBulletin()}
- catch(e){$("asub").textContent="Bollettino della Protezione Civile non raggiungibile ("+(e.message||"errore")+"). Consulta mappe.protezionecivile.gov.it.";return}
+async function revGeo(la,lo){
+ try{const j=await(await FETCH_T("https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=14&accept-language=it&lat="+la.toFixed(4)+"&lon="+lo.toFixed(4))).json();if(j&&j.address)return j.address}catch(e){}
+ try{const j=await(await FETCH_T("https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=it&latitude="+la.toFixed(4)+"&longitude="+lo.toFixed(4))).json();
+  return{city:j.city||j.locality||"",state:j.principalSubdivision||"",country_code:(j.countryCode||"").toLowerCase(),country:j.countryName||""}}catch(e){}
+ return null}
+async function viaDpc(a,city){
+ if(!ZC)ZC=await getCsv("zone_comuni.csv");
+ const J=await latestBulletin();
  const iss=ymd(new Date(J.date)),nxt=ymd(new Date(new Date(J.date).getTime()+864e5));
- const city=a.city||a.town||a.village||a.municipality||a.hamlet||"",nc=norm(city),st=norm(a.state||""),co=norm(a.county||"");
+ const nc=norm(city),st=norm(a.state||""),co=norm(a.county||"");
  let c=ZC.filter(r=>norm(r.comune_nome)===nc);
  if(c.length>1){const x=c.filter(r=>st&&(st.includes(norm(r.regione_nome).split("/")[0])||norm(r.regione_nome).includes(st)));if(x.length)c=x}
  if(c.length>1&&co){const x=c.filter(r=>co.includes(norm(r.provincia_nome))||norm(r.provincia_nome).includes(co));if(x.length)c=x}
- if(!c.length){$("asub").textContent="Comune non riconosciuto"+(city?" ("+city+")":"")+": non riesco a individuare la zona di allerta.";return}
- const z=c[0];
- $("asub").textContent="Zona: "+z.zona_nome+" ("+z.zona_codice+") · "+z.comune_nome+", "+z.regione_nome+" · "+(src==="posizione"?"dalla tua posizione":src)+(extra?" · "+extra:"");
- for(let k=0;k<2;k++){
-  const d=new Date(Date.now()+k*864e5),day=ymd(d),box=$("al"+k);
-  $("ad"+k).textContent=(k?"Domani · ":"Oggi · ")+d.toLocaleDateString("it-IT",RT({weekday:"long",day:"numeric",month:"long"}));
+ if(!c.length)throw new Error("comune non riconosciuto"+(city?" ("+city+")":""));
+ const z=c[0],zn=nz(z.zona_nome),rg=nz(z.regione_nome).split("/")[0];
+ const ex=new RegExp("(^|, )"+zn.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(, |$)");
+ const days=[0,1].map(k=>{
+  const day=ymd(new Date(Date.now()+k*864e5));
   const sec=day===iss?J.today:day===nxt?J.tomorrow:null;
-  if(!sec){const e=mk("div","al lv-none"),t=mk("div","top");t.append(mk("b",null,"Bollettino non ancora disponibile"));e.append(t,mk("span",null,"Il Dipartimento lo pubblica di norma verso le 16:00."));box.append(e);continue}
-  const when=J.name,zone="Zona: "+z.zona_nome+" ("+z.zona_codice+")";
-  const zn=nz(z.zona_nome),rg=nz(z.regione_nome).split("/")[0],ex=new RegExp("(^|, )"+zn.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(, |$)"),best={};
+  if(!sec)return null;
+  const best={};
   parseDesc(sec.html_descrition||"").forEach(it=>{
    const r=nz(it.region);if(!(r.includes(rg)||rg.includes(r)))return;
    const zs=nz(it.zones),exact=ex.test(zs);if(!exact&&!zs.includes(zn))return;
    const o={n:it.n,t:it.t,lv:it.lv,approx:!exact},p=best[it.n];
    if(!p||o.lv>p.lv)best[it.n]=o});
-  const hit=Object.values(best).sort((p,q)=>q.lv-p.lv);
-  if(!hit.length){const e=mk("div","al lv-green"),t=mk("div","top");t.append(mk("span","chip","Verde"),mk("b",null,"Nessuna allerta prevista"));e.append(t,mk("span",null,when),mk("span",null,zone));box.append(e);continue}
-  hit.forEach(x=>{const e=mk("div","al lv-"+LVN[x.lv][0]),t=mk("div","top");
+  return Object.values(best).sort((p,q)=>q.lv-p.lv)});
+ const zone="Zona: "+z.zona_nome+" ("+z.zona_codice+")";
+ return{sub:zone+" · "+z.comune_nome+", "+z.regione_nome,zone,when:J.name,days,src:"Protezione Civile (DPC)",stale:!!J._stale}}
+async function viaAllertaMeteo(a,city){
+ const slug=norm(city).replace(/['’`]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+ if(!slug)throw new Error("comune sconosciuto");
+ const r=await FETCH_T("https://allertameteo.app/api/alert/"+encodeURIComponent(slug));
+ if(!r.ok)throw new Error("HTTP "+r.status);
+ const j=await r.json(),d=j&&j.data;if(!d)throw new Error("risposta vuota");
+ const st=norm(a.state||""),rg=norm(d.regione||"").split("/")[0];
+ if(st&&rg&&!(st.includes(rg)||rg.includes(st)))throw new Error("comune omonimo in un'altra regione");
+ const bi=d.bulletin_info||{};
+ const RK={idrogeologico:"Rischio idrogeologico",temporali:"Temporali",idraulico:"Rischio idraulico"};
+ const days=[d.oggi,d.domani].map(x=>{
+  if(!x||!x.dettagli)return null;
+  const items=[];
+  Object.keys(RK).forEach(k=>{const t=String(x.dettagli[k]||""),lv=lvl(t);
+   if(lv>1)items.push({n:RK[k],t:(t.match(/^\s*(\w+)/)||[,""])[1],lv,approx:false})});
+  return items.sort((p,q)=>q.lv-p.lv)});
+ const zone="Zona: "+(d.zona||"n.d.");
+ return{sub:zone+" · "+d.comune+", "+d.regione,zone,when:"Bollettino"+(bi.data_bollettino?" del "+bi.data_bollettino:"")+(bi.ora_bollettino?" ore "+bi.ora_bollettino:""),days,src:"allertameteo.app (dati DPC)",stale:false}}
+function renderAlerts(R,extra,src){
+ $("asub").textContent=R.sub+" · "+(src==="posizione"?"dalla tua posizione":src)+(extra?" · "+extra:"")+" · fonte: "+R.src+(R.stale?" (dati in cache, possibile ritardo)":"");
+ for(let k=0;k<2;k++){
+  const d=new Date(Date.now()+k*864e5),box=$("al"+k),items=R.days[k];
+  $("ad"+k).textContent=(k?"Domani · ":"Oggi · ")+d.toLocaleDateString("it-IT",RT({weekday:"long",day:"numeric",month:"long"}));
+  if(!items){const e=mk("div","al lv-none"),t=mk("div","top");t.append(mk("b",null,"Bollettino non ancora disponibile"));e.append(t,mk("span",null,"Il Dipartimento lo pubblica di norma verso le 16:00."));box.append(e);continue}
+  if(!items.length){const e=mk("div","al lv-green"),t=mk("div","top");t.append(mk("span","chip","Verde"),mk("b",null,"Nessuna allerta prevista"));e.append(t,mk("span",null,R.when),mk("span",null,R.zone));box.append(e);continue}
+  items.forEach(x=>{const e=mk("div","al lv-"+LVN[x.lv][0]),t=mk("div","top");
    t.append(mk("span","chip",LVN[x.lv][1]),mk("b",null,x.n));
-   e.append(t,mk("span",null,"Criticità "+x.t.toLowerCase()),mk("span",null,when),mk("span",null,zone));if(x.approx)e.append(mk("span",null,"Corrispondenza approssimata: verifica sul sito della Protezione Civile."));box.append(e)});
- }
-}
+   e.append(t,mk("span",null,"Criticità "+x.t.toLowerCase()),mk("span",null,R.when),mk("span",null,R.zone));
+   if(x.approx)e.append(mk("span",null,"Corrispondenza approssimata: verifica sul sito della Protezione Civile."));
+   box.append(e)})}}
+async function loadAlerts(extra){
+ const{lo,la,src}=aloc;$("asub").textContent="Carico le allerte…";$("al0").replaceChildren();$("al1").replaceChildren();
+ const a=await revGeo(la,lo);
+ if(!a){$("asub").textContent="Impossibile ricavare il comune dalla posizione.";return}
+ if(a.country_code!=="it"){$("asub").textContent="Le allerte sono disponibili solo per l’Italia (zona rilevata: "+(a.country||"sconosciuta")+").";return}
+ const city=a.city||a.town||a.village||a.municipality||a.hamlet||"";
+ const errs=[];let R=null;
+ try{R=await viaDpc(a,city)}catch(e){errs.push("DPC: "+(e.message||"errore"))}
+ if(!R)try{R=await viaAllertaMeteo(a,city)}catch(e){errs.push("allertameteo.app: "+(e.message||"errore"))}
+ if(!R){
+  $("asub").textContent="Allerte al momento non disponibili ("+errs.join(" · ")+").";
+  const e=mk("div","al lv-none"),t=mk("div","top"),l=mk("a",null,"mappe.protezionecivile.gov.it");
+  t.append(mk("b",null,"Consulta la fonte ufficiale"));l.href="https://mappe.protezionecivile.gov.it/it/mappe-rischi/bollettino-di-criticita/";l.target="_blank";l.rel="noopener";
+  e.append(t,l);$("al0").append(e);return}
+ renderAlerts(R,extra,src)}
 $("agps").onclick=alertsGps;
 $("tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;const al=b.dataset.v==="all";
  document.querySelectorAll("#tabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));
