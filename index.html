@@ -50,6 +50,7 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ac);outline-off
 [hidden]{display:none!important}
 #map{height:min(64vh,540px);min-height:380px;background:var(--sea);font-family:Figtree,system-ui,sans-serif}
 .badge{z-index:1000}
+.dark-tiles{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6)}
 .pin{position:absolute;transform:translate(-50%,-110%);display:flex;gap:5px;white-space:nowrap;background:var(--card);color:var(--tx);border:2px solid var(--ac);border-radius:12px;padding:2px 7px;font:600 12px Figtree,system-ui,sans-serif;box-shadow:0 1px 5px rgba(0,0,0,.35);cursor:pointer}
 .pin b{font-weight:800}.pin.sel{background:var(--ac);color:#fff}
 </style>
@@ -141,11 +142,12 @@ function icon(s){return s.rain>2?"🌧️":s.rain>.3?"🌦️":s.cloud>.7?"☁�
 function txt(s){return s.rain>2?"Pioggia":s.rain>.3?"Rovesci":s.cloud>.7?"Nuvoloso":s.cloud>.4?"Poco nuvoloso":"Sereno"}
 
 const dk=()=>document.documentElement.dataset.theme==="dark"||(document.documentElement.dataset.theme!=="light"&&matchMedia("(prefers-color-scheme:dark)").matches);
-const map=L.map("map",{center:[42.2,12.6],zoom:6,minZoom:3,maxZoom:10});
+const map=L.map("map",{center:[42.2,12.6],zoom:6,minZoom:3,maxZoom:10,zoomControl:false});
+L.control.zoom({position:"bottomright"}).addTo(map);
 const MK=L.layerGroup().addTo(map);
 let base,ov=null,FR=[],RL=[],rf=0;
 function setBase(){if(base)map.removeLayer(base);
- base=L.tileLayer("https://{s}.basemaps.cartocdn.com/"+(dk()?"dark_all":"light_all")+"/{z}/{x}/{y}{r}.png",{subdomains:"abcd",maxZoom:19,zIndex:1,attribution:"© OpenStreetMap © CARTO"}).addTo(map);draw()}
+ base=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,zIndex:1,className:dk()?"dark-tiles":"",attribution:"© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a>"}).addTo(map);draw()}
 const isRadar=()=>layer==="rain"&&FR.length>0;
 const BND=[[36,6],[47.5,19]],GW=120,GH=140,mc=la=>Math.log(Math.tan(Math.PI/4+la*Math.PI/360)),M0=mc(36),M1=mc(47.5);
 const fc=document.createElement("canvas");fc.width=GW;fc.height=GH;const fx=fc.getContext("2d");
