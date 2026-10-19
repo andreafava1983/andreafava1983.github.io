@@ -53,6 +53,13 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ac);outline-off
 .dark-tiles{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6)}
 .pin{position:absolute;transform:translate(-50%,-110%);display:flex;gap:5px;white-space:nowrap;background:var(--card);color:var(--tx);border:2px solid var(--ac);border-radius:12px;padding:2px 7px;font:600 12px Figtree,system-ui,sans-serif;box-shadow:0 1px 5px rgba(0,0,0,.35);cursor:pointer}
 .pin b{font-weight:800}.pin.sel{background:var(--ac);color:#fff}
+.h2{font-size:17px;font-weight:800;margin:20px 0 0}
+.days{overflow:hidden}
+.hr{display:grid;grid-template-columns:48px 28px 42px 1fr auto;align-items:center;gap:8px;padding:9px 14px}
+.hr+.hr{border-top:1px solid var(--ln)}
+.hr i{font-style:normal;font-size:20px}
+.hr span,.hr em{font-style:normal;color:var(--mu);font-size:13px}
+.hr.cur{background:color-mix(in srgb,var(--ac) 16%,transparent)}
 </style>
 </head>
 <body>
@@ -71,8 +78,9 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ac);outline-off
 
   <div class="seg" id="layers" role="group" aria-label="Livello mappa">
     <button data-l="rain" aria-pressed="true">Radar</button>
+    <button data-l="fc" aria-pressed="false">Previsto</button>
     <button data-l="cloud" aria-pressed="false">Nuvole</button>
-    <button data-l="temp" aria-pressed="false">Temperature</button>
+    <button data-l="temp" aria-pressed="false">Temp.</button>
   </div>
   <div class="leg" id="leg"></div>
   <div class="legt"><span id="l0"></span><span id="l1"></span></div>
@@ -85,6 +93,9 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ac);outline-off
 
   <div class="chips" id="cities" role="group" aria-label="Città"></div>
   <div class="days" id="days"></div>
+  <h2 class="h2">Ora per ora</h2>
+  <div class="seg" id="hseg" role="group" aria-label="Giorno delle previsioni orarie"></div>
+  <div class="days" id="hours"></div>
   <p class="note" id="src">Carico i dati meteo…</p>
 </main>
 <script>
@@ -119,9 +130,9 @@ for(let i=0;i<7;i++)for(let j=0;j<9;j++)PTS.push([6.5+i*2,36.5+j*1.3]);
 const ROME=+new Intl.DateTimeFormat("it-IT",{timeZone:"Europe/Rome",hour:"numeric",hourCycle:"h23"}).format(new Date());
 async function load(){
  try{
-  const u="https://api.open-meteo.com/v1/forecast?latitude="+PTS.map(p=>p[1].toFixed(2)).join(",")+"&longitude="+PTS.map(p=>p[0].toFixed(2)).join(",")+"&hourly=temperature_2m,precipitation,cloud_cover&forecast_days=5&timezone=Europe%2FRome";
+  const u="https://api.open-meteo.com/v1/forecast?latitude="+PTS.map(p=>p[1].toFixed(2)).join(",")+"&longitude="+PTS.map(p=>p[0].toFixed(2)).join(",")+"&hourly=temperature_2m,precipitation,cloud_cover,wind_speed_10m,precipitation_probability&forecast_days=5&timezone=Europe%2FRome";
   const r=await fetch(u);if(!r.ok)throw 0;let j=await r.json();if(!Array.isArray(j))j=[j];
-  LIVE=j.map(x=>({T:x.hourly.temperature_2m,R:x.hourly.precipitation,C:x.hourly.cloud_cover}));
+  LIVE=j.map(x=>({T:x.hourly.temperature_2m,R:x.hourly.precipitation,C:x.hourly.cloud_cover,W:x.hourly.wind_speed_10m,P:x.hourly.precipitation_probability}));
   $("src").textContent="Previsioni: Open-Meteo.com. Radar: RainViewer, ultime 2 ore. Nuvole e temperature sono interpolate tra i punti.";
  }catch(e){$("src").textContent="Servizio meteo non raggiungibile: mostro dati dimostrativi."}
  update();
@@ -155,7 +166,7 @@ function field(){
  const im=fx.createImageData(GW,GH),d=im.data,cc=dk()?[225,235,250]:[60,80,110];
  for(let j=0;j<GH;j++){const m=M1-(j+.5)/GH*(M1-M0),la=(2*Math.atan(Math.exp(m))-Math.PI/2)*180/Math.PI;
   for(let i=0;i<GW;i++){const s=sample(6+(i+.5)/GW*13,la,t);let c;
-   if(layer==="rain"){c=rainColor(s.rain)||[...cc,Math.round(s.cloud*45)]}
+   if(layer==="rain"||layer==="fc"){c=rainColor(s.rain)||[...cc,Math.round(s.cloud*45)]}
    else if(layer==="cloud")c=[...cc,Math.round(Math.pow(s.cloud,1.3)*190)];
    else c=[...tempColor(s.temp),150];
    const o=(j*GW+i)*4;d[o]=c[0];d[o+1]=c[1];d[o+2]=c[2];d[o+3]=c[3]}}
@@ -168,7 +179,7 @@ async function loadRadar(){
 function setMode(){const r=isRadar();$("dayseg").hidden=r;$("sl").max=r?Math.max(0,FR.length-1):95;$("sl").value=r?rf:t}
 function badgeSl(){
  if(isRadar()){const f=FR[rf];$("badge").textContent="Radar "+new Date(f.time*1000).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});$("sl").value=rf}
- else{$("badge").textContent=fmt(t).replace(/^./,c=>c.toUpperCase());$("sl").value=t}}
+ else{$("badge").textContent=(layer==="fc"?"Radar previsto · ":"")+fmt(t).replace(/^./,c=>c.toUpperCase());$("sl").value=t}}
 function draw(){
  const radar=isRadar();
  RL.forEach((l,i)=>{if(radar){if(!map.hasLayer(l))l.addTo(map);l.setOpacity(i===rf?.8:0)}else if(map.hasLayer(l))map.removeLayer(l)});
@@ -197,13 +208,14 @@ function forecast(){
   const m=sample(lo,la,k*24+12);m.rain=rn/24*1.6;m.cloud=cl/24;
   const dt=new Date(start.getTime()+k*864e5),nm=k===0?"Oggi":k===1?"Domani":dt.toLocaleDateString("it-IT",{weekday:"long"}).replace(/^./,c=>c.toUpperCase());
   html+=`<div class="day"><b>${nm}</b><i>${icon(m)}</i><em>${rn>.5?rn.toFixed(0)+" mm":txt(m)}</em><span><b>${Math.round(mx)}°</b> <em>${Math.round(mn)}°</em></span></div>`}
- $("days").innerHTML=html;
+ $("days").innerHTML=html;hourly();
 }
 // controlli
-$("layers").onclick=e=>{const b=e.target.closest("button");if(!b)return;layer=b.dataset.l;
+$("layers").onclick=e=>{const b=e.target.closest("button");if(!b)return;layer=b.dataset.l;if(layer==="fc"&&t<24)t=36;
  document.querySelectorAll("#layers button").forEach(x=>x.setAttribute("aria-pressed",x===b));legend();stop();setMode();update()};
 function legend(){const L=$("leg");
- if(layer==="rain"){L.style.background="linear-gradient(90deg,rgb(150,210,250),rgb(60,130,235),rgb(30,70,180),rgb(120,50,170))";$("l0").textContent="Debole";$("l1").textContent="Intensa"}
+ if(layer==="fc"){L.style.background="linear-gradient(90deg,rgb(120,200,255),rgb(50,130,240),rgb(30,200,90),rgb(245,220,40),rgb(240,60,50))";$("l0").textContent="Debole";$("l1").textContent="Intensa"}
+ else if(layer==="rain"){L.style.background="linear-gradient(90deg,rgb(150,210,250),rgb(60,130,235),rgb(30,70,180),rgb(120,50,170))";$("l0").textContent="Debole";$("l1").textContent="Intensa"}
  else if(layer==="temp"){L.style.background="linear-gradient(90deg,rgb(90,120,230),rgb(80,190,230),rgb(110,210,120),rgb(250,220,70),rgb(245,130,50),rgb(220,50,50))";$("l0").textContent="2 °C";$("l1").textContent="30 °C"}
  else{L.style.background="linear-gradient(90deg,transparent,#fff)";L.style.border="1px solid var(--ln)";$("l0").textContent="Sereno";$("l1").textContent="Coperto"}
  if(layer!=="cloud")L.style.border="0"}
@@ -218,7 +230,7 @@ $("play").onclick=()=>{if(timer)return stop();$("play").textContent="❚❚";
  timer=setInterval(()=>{if(isRadar())rf=(rf+1)%FR.length;else t=(t+1)%96;update()},isRadar()?500:260)};
 matchMedia("(prefers-color-scheme:dark)").addEventListener("change",()=>setBase());
 
-const API=(la,lo)=>"https://api.open-meteo.com/v1/forecast?latitude="+la+"&longitude="+lo+"&hourly=temperature_2m,precipitation,cloud_cover&forecast_days=5&timezone=Europe%2FRome";
+const API=(la,lo)=>"https://api.open-meteo.com/v1/forecast?latitude="+la+"&longitude="+lo+"&hourly=temperature_2m,precipitation,cloud_cover,wind_speed_10m,precipitation_probability&forecast_days=5&timezone=Europe%2FRome";
 function msg(t){$("msg").textContent=t}
 function pick(i){sel=i;document.querySelectorAll("#cities button").forEach((x,j)=>x.setAttribute("aria-pressed",j===i));map.panTo([CITIES[i][2],CITIES[i][1]]);update()}
 async function addPlace(name,lo,la){
@@ -226,7 +238,7 @@ async function addPlace(name,lo,la){
  msg("Carico "+name+"…");
  try{
   const r=await fetch(API(la.toFixed(2),lo.toFixed(2)));if(!r.ok)throw 0;const x=(await r.json()).hourly;
-  const d={T:x.temperature_2m,R:x.precipitation,C:x.cloud_cover};
+  const d={T:x.temperature_2m,R:x.precipitation,C:x.cloud_cover,W:x.wind_speed_10m,P:x.precipitation_probability};
   let i=CITIES.findIndex(c=>c[0]===name);
   if(i<0){
    CITIES.push([name,lo,la]);PTS.push([lo,la]);LIVE.push(d);i=CITIES.length-1;
@@ -261,6 +273,22 @@ function gps(){
   ()=>msg("Posizione non consentita: abilitala nelle impostazioni del browser."),{timeout:10000});
 }
 $("go").onclick=search;$("q").onkeydown=e=>{if(e.key==="Enter")search()};$("gps").onclick=gps;
+let hd=0;
+for(let k=0;k<4;k++){const b=document.createElement("button"),dt=new Date(start.getTime()+k*864e5);
+ b.textContent=k===0?"Oggi":k===1?"Domani":dt.toLocaleDateString("it-IT",{weekday:"short"});
+ b.onclick=()=>{hd=k;hourly()};$("hseg").appendChild(b)}
+function hourly(){
+ const[n,lo,la]=CITIES[sel],k=LIVE?PTS.findIndex(p=>p[0]===lo&&p[1]===la):-1,D=k>=0?LIVE[k]:null;let html="";
+ document.querySelectorAll("#hseg button").forEach((b,i)=>b.setAttribute("aria-pressed",i===hd));
+ for(let hh=0;hh<24;hh++){
+  const idx=hd*24+hh;let s,w="–",p="";
+  if(D){s={temp:D.T[idx],rain:D.R[idx],cloud:D.C[idx]/100};if(D.W&&D.W[idx]!=null)w=Math.round(D.W[idx])+" km/h";if(D.P&&D.P[idx]!=null)p=D.P[idx]+"%"}
+  else s=sample(lo,la,idx-ROME);
+  let ic=icon(s);const night=hh<6||hh>=20;
+  if(night&&ic==="☀️")ic="🌙";else if(night&&ic==="⛅")ic="☁️";
+  html+=`<div class="hr${idx===ROME?" cur":""}"><b>${String(hh).padStart(2,"0")}:00</b><i>${ic}</i><b>${Math.round(s.temp)}°</b><span>${s.rain>=.05?s.rain.toFixed(1)+" mm":"Asciutto"}${p?" · "+p:""}</span><em>${w}</em></div>`}
+ $("hours").innerHTML=html;
+}
 legend();update();load();loadRadar();
 </script>
 </body>
