@@ -109,14 +109,17 @@ button.day{width:100%;border:0;background:none;color:inherit;font:inherit;text-a
   <div class="days" id="days"></div>
   <p class="note" id="hint">Tocca un giorno per vedere il dettaglio ora per ora.</p>
   <div id="hwrap" hidden><h2 class="h2" id="htitle"></h2><div class="days" id="hours"></div></div>
+  <div class="find" style="margin-top:14px"><button id="mref" style="flex:1">🔄 Aggiorna dati</button></div>
+  <p class="note" id="mupd"></p>
   <p class="note" id="src">Carico i dati meteo…</p>
 </div>
   <section id="v-all" hidden>
     <h1>Allerte meteo</h1>
     <p class="sub" id="asub">Zona non ancora rilevata</p>
-    <div class="find"><button id="agps" style="flex:1">📍 Aggiorna dalla mia posizione</button></div>
+    <div class="find"><button id="agps" style="flex:1">📍 La mia posizione</button><button id="aref" style="flex:1">🔄 Aggiorna dati</button></div>
     <h2 class="h2" id="ad0">Oggi</h2><div class="days" id="al0"></div>
     <h2 class="h2" id="ad1">Domani</h2><div class="days" id="al1"></div>
+    <p class="note" id="aupd"></p>
     <p class="note">Fonte: Dipartimento della Protezione Civile (bollettino di criticità, 156 zone di allerta), dal repository ufficiale del DPC. Se non raggiungibile, riserva: allertameteo.app (progetto indipendente che ripubblica gli stessi bollettini). Il bollettino è emesso di norma verso le 16:00; per i dettagli consulta il sito della Protezione Civile della tua regione.</p>
   </section>
 </main>
@@ -146,18 +149,18 @@ function simSample(lo,la,tt){
  const temp=23-(la-36)*.95+4.5*Math.sin((hour-9)/24*6.283)-cloud*3+(fbm(x+9,y)-.5)*6-(rain>0?2:0);
  return{cloud,rain,temp};
 }
-let LIVE=null;const PTS=[],NB=new Map();
+let WT=null,RADT=null;let LIVE=null;const PTS=[],NB=new Map();
 CITIES.forEach(([n,lo,la])=>PTS.push([lo,la]));
 for(let i=0;i<7;i++)for(let j=0;j<9;j++)PTS.push([6.5+i*2,36.5+j*1.3]);
-const ROME=+new Intl.DateTimeFormat("it-IT",{timeZone:"Europe/Rome",hour:"numeric",hourCycle:"h23"}).format(new Date());
+const romeH=()=>+new Intl.DateTimeFormat("it-IT",{timeZone:"Europe/Rome",hour:"numeric",hourCycle:"h23"}).format(new Date());let ROME=romeH();
 async function load(){
  try{
   const u="https://api.open-meteo.com/v1/forecast?latitude="+PTS.map(p=>p[1].toFixed(2)).join(",")+"&longitude="+PTS.map(p=>p[0].toFixed(2)).join(",")+"&hourly=temperature_2m,precipitation,cloud_cover,wind_speed_10m,precipitation_probability&forecast_days=5&timezone=Europe%2FRome";
   const r=await fetch(u);if(!r.ok)throw 0;let j=await r.json();if(!Array.isArray(j))j=[j];
   LIVE=j.map(x=>({T:x.hourly.temperature_2m,R:x.hourly.precipitation,C:x.hourly.cloud_cover,W:x.hourly.wind_speed_10m,P:x.hourly.precipitation_probability}));
-  $("src").textContent="Previsioni: Open-Meteo.com. Radar: RainViewer, ultime 2 ore. Nuvole e temperature sono interpolate tra i punti.";
- }catch(e){$("src").textContent="Servizio meteo non raggiungibile: mostro dati dimostrativi."}
- update();
+  ROME=romeH();WT=new Date();$("src").textContent="Previsioni: Open-Meteo.com. Radar: RainViewer, ultime 2 ore. Nuvole e temperature sono interpolate tra i punti.";
+ }catch(e){$("src").textContent=LIVE?"Aggiornamento non riuscito: mostro gli ultimi dati disponibili.":"Servizio meteo non raggiungibile: mostro dati dimostrativi."}
+ updMeteo();update();
 }
 function sample(lo,la,tt){
  if(!LIVE)return simSample(lo,la,tt);
@@ -195,9 +198,9 @@ function field(){
  fx.putImageData(im,0,0);return fc.toDataURL()}
 async function loadRadar(){
  try{const j=await(await fetch("https://api.rainviewer.com/public/weather-maps.json")).json();
-  FR=j.radar.past||[];
+  RL.forEach(l=>{if(map.hasLayer(l))map.removeLayer(l)});FR=j.radar.past||[];
   RL=FR.map(f=>L.tileLayer(j.host+f.path+"/256/{z}/{x}/{y}/2/1_1.png",{maxNativeZoom:7,maxZoom:19,opacity:0,zIndex:5,attribution:'Radar © <a href="https://www.rainviewer.com">RainViewer</a>'}));
-  rf=FR.length-1;setMode();update()}catch(e){FR=[];RL=[]}}
+  rf=FR.length-1;RADT=FR.length?new Date(FR[rf].time*1000):null;updMeteo();setMode();update()}catch(e){}}
 function setMode(){const r=isRadar(),f=layer==="fc";$("dayseg").hidden=r||f;$("sl").max=r?Math.max(0,FR.length-1):f?23:95;if(f&&t>23)t=0;$("sl").value=r?rf:t}
 function badgeSl(){
  if(isRadar()){const f=FR[rf];$("badge").textContent="Radar "+new Date(f.time*1000).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});$("sl").value=rf}
@@ -317,7 +320,12 @@ const norm=x=>(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCas
 const RT=o=>({timeZone:"Europe/Rome",...o});
 const ymd=d=>new Intl.DateTimeFormat("sv-SE",RT({})).format(d);
 const hm=d=>d.toLocaleString("it-IT",RT({weekday:"short",hour:"2-digit",minute:"2-digit"}));
-let aloc=null;
+let aloc=null,aKey=null;
+const fts=d=>d.toLocaleDateString("it-IT",RT({day:"2-digit",month:"2-digit",year:"numeric"}))+" alle "+d.toLocaleTimeString("it-IT",RT({hour:"2-digit",minute:"2-digit"}));
+function updMeteo(){$("mupd").textContent=(WT?"Previsioni aggiornate il "+fts(WT):"Dati dimostrativi: nessun aggiornamento riuscito")+(RADT?" · Radar: ultimo fotogramma del "+fts(RADT):"")}
+async function refreshMeteo(){const b=$("mref");b.disabled=true;b.textContent="Aggiorno…";NB.clear();try{await Promise.all([load(),loadRadar()])}finally{b.disabled=false;b.textContent="🔄 Aggiorna dati"}}
+function alertsCity(){const c=CITIES[sel];aloc={lo:c[1],la:c[2],src:c[0]};loadAlerts()}
+async function refreshAlerts(){const b=$("aref");if(!aloc){alertsCity();return}b.disabled=true;b.textContent="Aggiorno…";FORCE=true;try{await loadAlerts()}finally{FORCE=false;b.disabled=false;b.textContent="🔄 Aggiorna dati"}}
 function mk(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
 function alertsGps(){
  $("asub").textContent="Cerco la tua posizione…";
@@ -325,6 +333,7 @@ function alertsGps(){
  if(!navigator.geolocation)return fb("posizione non disponibile");
  navigator.geolocation.getCurrentPosition(p=>{aloc={lo:p.coords.longitude,la:p.coords.latitude,src:"posizione"};loadAlerts()},()=>fb("posizione non consentita, uso "+CITIES[sel][0]),{timeout:10000});
 }
+let FORCE=false;
 const FETCH_T=(u,ms=9000)=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);return fetch(u,{signal:c.signal}).finally(()=>clearTimeout(t))};
 const OD="opendatasicilia/DPC-bollettini-criticita-idrogeologica-idraulica";
 const RAW=["https://raw.githubusercontent.com/"+OD+"/main/data/","https://raw.githubusercontent.com/"+OD+"/main/","https://cdn.jsdelivr.net/gh/"+OD+"@main/data/","https://cdn.jsdelivr.net/gh/"+OD+"@main/"];
@@ -351,8 +360,8 @@ const DPCAPI="https://api.github.com/repos/pcm-dpc/DPC-Bollettini-Criticita-Idro
 const nz=x=>norm(x).replace(/[\u2019\u2018`]/g,"'").replace(/[-\u2013]/g," ").replace(/\s+/g," ").trim();
 async function latestBulletin(){
  let st=null;
- try{const c=JSON.parse(localStorage.getItem("dpcb")||"null");if(c){if(Date.now()-c.t<15*60e3)return c.j;st=c}}catch(e){}
- const save=j=>{try{localStorage.setItem("dpcb",JSON.stringify({t:Date.now(),j}))}catch(e){}return j};
+ try{const c=JSON.parse(localStorage.getItem("dpcb")||"null");if(c){if(!FORCE&&Date.now()-c.t<15*60e3){c.j._t=c.t;return c.j}st=c}}catch(e){}
+ const save=j=>{j._t=Date.now();try{localStorage.setItem("dpcb",JSON.stringify({t:Date.now(),j}))}catch(e){}return j};
  try{
   const cm=await(await FETCH_T(DPCAPI+"commits?per_page=8&path=files")).json();
   if(!Array.isArray(cm))throw new Error("limite richieste GitHub");
@@ -366,7 +375,7 @@ async function latestBulletin(){
    return save(await r.json())}
   throw new Error("nessun bollettino trovato")
  }catch(e){
-  if(st&&Date.now()-st.t<36*36e5){st.j._stale=true;return st.j}
+  if(st&&Date.now()-st.t<36*36e5){st.j._stale=true;st.j._t=st.t;return st.j}
   throw e}}
 const RISKN={IDROGEOLOGICO:"Rischio idrogeologico",TEMPORALI:"Temporali",IDRAULICO:"Rischio idraulico"};
 function parseDesc(h){
@@ -407,7 +416,7 @@ async function viaDpc(a,city){
    if(!p||o.lv>p.lv)best[it.n]=o});
   return Object.values(best).sort((p,q)=>q.lv-p.lv)});
  const zone="Zona: "+z.zona_nome+" ("+z.zona_codice+")";
- return{sub:zone+" · "+z.comune_nome+", "+z.regione_nome,zone,when:J.name,days,valid,src:"Protezione Civile (DPC)",stale:!!J._stale}}
+ return{sub:zone+" · "+z.comune_nome+", "+z.regione_nome,zone,when:J.name,days,valid,src:"Protezione Civile (DPC)",stale:!!J._stale,fetched:J._t||Date.now()}}
 async function viaAllertaMeteo(a,city){
  const slug=norm(city).replace(/['’`]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
  if(!slug)throw new Error("comune sconosciuto");
@@ -426,9 +435,10 @@ async function viaAllertaMeteo(a,city){
    if(lv>1)items.push({n:RK[k],t:(t.match(/^\s*(\w+)/)||[,""])[1],lv,approx:false})});
   return items.sort((p,q)=>q.lv-p.lv)});
  const zone="Zona: "+(d.zona||"n.d.");
- return{sub:zone+" · "+d.comune+", "+d.regione,zone,when:"Bollettino"+(bi.data_bollettino?" del "+bi.data_bollettino:"")+(bi.ora_bollettino?" ore "+bi.ora_bollettino:""),days,valid,src:"allertameteo.app (dati DPC)",stale:false}}
+ return{sub:zone+" · "+d.comune+", "+d.regione,zone,when:"Bollettino"+(bi.data_bollettino?" del "+bi.data_bollettino:"")+(bi.ora_bollettino?" ore "+bi.ora_bollettino:""),days,valid,src:"allertameteo.app (dati DPC)",stale:false,fetched:Date.now()}}
 function renderAlerts(R,extra,src){
- $("asub").textContent=R.sub+" · "+(src==="posizione"?"dalla tua posizione":src)+(extra?" · "+extra:"")+" · fonte: "+R.src+(R.stale?" (dati in cache, possibile ritardo)":"");
+ $("aupd").textContent="Dati recuperati il "+fts(new Date(R.fetched))+" · "+R.when+(R.stale?" · copia salvata: la fonte non rispondeva":"");
+ $("asub").textContent=R.sub+" · "+(src==="posizione"?"dalla tua posizione":"città selezionata: "+src)+(extra?" · "+extra:"")+" · fonte: "+R.src+(R.stale?" (dati in cache, possibile ritardo)":"");
  for(let k=0;k<2;k++){
   const d=new Date(Date.now()+k*864e5),box=$("al"+k),items=R.days[k];
   $("ad"+k).textContent=(k?"Domani · ":"Oggi · ")+d.toLocaleDateString("it-IT",RT({weekday:"long",day:"numeric",month:"long"}));
@@ -440,7 +450,7 @@ function renderAlerts(R,extra,src){
    if(x.approx)e.append(mk("span",null,"Corrispondenza approssimata: verifica sul sito della Protezione Civile."));
    box.append(e)})}}
 async function loadAlerts(extra){
- const{lo,la,src}=aloc;$("asub").textContent="Carico le allerte…";$("al0").replaceChildren();$("al1").replaceChildren();
+ const{lo,la,src}=aloc;$("asub").textContent="Carico le allerte…";$("al0").replaceChildren();$("al1").replaceChildren();$("aupd").textContent="";
  const a=await revGeo(la,lo);
  if(!a){$("asub").textContent="Impossibile ricavare il comune dalla posizione.";return}
  if(a.country_code!=="it"){$("asub").textContent="Le allerte sono disponibili solo per l’Italia (zona rilevata: "+(a.country||"sconosciuta")+").";return}
@@ -449,16 +459,17 @@ async function loadAlerts(extra){
  try{R=await viaDpc(a,city)}catch(e){errs.push("DPC: "+(e.message||"errore"))}
  if(!R)try{R=await viaAllertaMeteo(a,city)}catch(e){errs.push("allertameteo.app: "+(e.message||"errore"))}
  if(!R){
+  $("aupd").textContent="Ultimo tentativo il "+fts(new Date())+": non riuscito.";
   $("asub").textContent="Allerte al momento non disponibili ("+errs.join(" · ")+").";
   const e=mk("div","al lv-none"),t=mk("div","top"),l=mk("a",null,"mappe.protezionecivile.gov.it");
   t.append(mk("b",null,"Consulta la fonte ufficiale"));l.href="https://mappe.protezionecivile.gov.it/it/mappe-rischi/bollettino-di-criticita/";l.target="_blank";l.rel="noopener";
   e.append(t,l);$("al0").append(e);return}
  renderAlerts(R,extra,src)}
-$("agps").onclick=alertsGps;
+$("agps").onclick=alertsGps;$("aref").onclick=refreshAlerts;$("mref").onclick=refreshMeteo;
 $("tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;const al=b.dataset.v==="all";
  document.querySelectorAll("#tabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));
  $("v-meteo").hidden=al;$("v-all").hidden=!al;
- if(al){stop();if(!aloc)alertsGps()}else map.invalidateSize()};
+ if(al){stop();const c=CITIES[sel],k=c[0]+"|"+c[1]+"|"+c[2];if(!aloc||k!==aKey){aKey=k;alertsCity()}}else map.invalidateSize()};
 legend();update();load();loadRadar();
 </script>
 </body>
