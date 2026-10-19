@@ -60,10 +60,24 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ac);outline-off
 .hr i{font-style:normal;font-size:20px}
 .hr span,.hr em{font-style:normal;color:var(--mu);font-size:13px}
 .hr.cur{background:color-mix(in srgb,var(--ac) 16%,transparent)}
+.lv-green{--c:#2e9e5b}.lv-yellow{--c:#e6b800}.lv-orange{--c:#f0821e}.lv-red{--c:#d6342c}
+.al{display:grid;gap:3px;padding:12px 14px 12px 12px;border-left:6px solid var(--c)}
+.al+.al{border-top:1px solid var(--ln)}
+.al .top{display:flex;align-items:center;gap:8px;font-weight:800}
+.chip{background:var(--c);color:#fff;border-radius:10px;padding:2px 9px;font-size:13px;font-weight:800}
+.lv-yellow .chip{color:#222}
+.al span{color:var(--mu);font-size:14px}
+button.day{width:100%;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.day[aria-expanded=true]{background:color-mix(in srgb,var(--ac) 14%,transparent)}
 </style>
 </head>
 <body>
 <main>
+  <div class="seg" id="tabs" role="group" aria-label="Pagina">
+    <button data-v="meteo" aria-pressed="true">Meteo</button>
+    <button data-v="all" aria-pressed="false">Allerte</button>
+  </div>
+  <div id="v-meteo">
   <h1 id="city">Roma</h1>
   <div class="now"><b id="temp">–</b><span id="desc"></span></div>
   <p class="sub" id="when"></p>
@@ -93,10 +107,18 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--ac);outline-off
 
   <div class="chips" id="cities" role="group" aria-label="Città"></div>
   <div class="days" id="days"></div>
-  <h2 class="h2">Ora per ora</h2>
-  <div class="seg" id="hseg" role="group" aria-label="Giorno delle previsioni orarie"></div>
-  <div class="days" id="hours"></div>
+  <p class="note" id="hint">Tocca un giorno per vedere il dettaglio ora per ora.</p>
+  <div id="hwrap" hidden><h2 class="h2" id="htitle"></h2><div class="days" id="hours"></div></div>
   <p class="note" id="src">Carico i dati meteo…</p>
+</div>
+  <section id="v-all" hidden>
+    <h1>Allerte meteo</h1>
+    <p class="sub" id="asub">Zona non ancora rilevata</p>
+    <div class="find"><button id="agps" style="flex:1">📍 Aggiorna dalla mia posizione</button></div>
+    <h2 class="h2" id="ad0">Oggi</h2><div class="days" id="al0"></div>
+    <h2 class="h2" id="ad1">Domani</h2><div class="days" id="al1"></div>
+    <p class="note">Fonte: MeteoAlarm (EUMETNET). I livelli indicano intensità e ricorrenza dei fenomeni; per i dettagli e le zone di allerta locali consulta meteoam.it e il sito della Protezione Civile della tua regione.</p>
+  </section>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -176,10 +198,10 @@ async function loadRadar(){
   FR=j.radar.past||[];
   RL=FR.map(f=>L.tileLayer(j.host+f.path+"/256/{z}/{x}/{y}/2/1_1.png",{maxNativeZoom:7,maxZoom:19,opacity:0,zIndex:5,attribution:'Radar © <a href="https://www.rainviewer.com">RainViewer</a>'}));
   rf=FR.length-1;setMode();update()}catch(e){FR=[];RL=[]}}
-function setMode(){const r=isRadar();$("dayseg").hidden=r;$("sl").max=r?Math.max(0,FR.length-1):95;$("sl").value=r?rf:t}
+function setMode(){const r=isRadar(),f=layer==="fc";$("dayseg").hidden=r||f;$("sl").max=r?Math.max(0,FR.length-1):f?23:95;if(f&&t>23)t=0;$("sl").value=r?rf:t}
 function badgeSl(){
  if(isRadar()){const f=FR[rf];$("badge").textContent="Radar "+new Date(f.time*1000).toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});$("sl").value=rf}
- else{$("badge").textContent=(layer==="fc"?"Radar previsto · ":"")+fmt(t).replace(/^./,c=>c.toUpperCase());$("sl").value=t}}
+ else{$("badge").textContent=(layer==="fc"?"Previsto +"+t+" h · ":"")+fmt(t).replace(/^./,c=>c.toUpperCase());$("sl").value=t}}
 function draw(){
  const radar=isRadar();
  RL.forEach((l,i)=>{if(radar){if(!map.hasLayer(l))l.addTo(map);l.setOpacity(i===rf?.8:0)}else if(map.hasLayer(l))map.removeLayer(l)});
@@ -207,11 +229,11 @@ function forecast(){
   for(let hh=0;hh<24;hh++){const s=sample(lo,la,k*24+hh);mx=Math.max(mx,s.temp);mn=Math.min(mn,s.temp);rn+=s.rain;cl+=s.cloud}
   const m=sample(lo,la,k*24+12);m.rain=rn/24*1.6;m.cloud=cl/24;
   const dt=new Date(start.getTime()+k*864e5),nm=k===0?"Oggi":k===1?"Domani":dt.toLocaleDateString("it-IT",{weekday:"long"}).replace(/^./,c=>c.toUpperCase());
-  html+=`<div class="day"><b>${nm}</b><i>${icon(m)}</i><em>${rn>.5?rn.toFixed(0)+" mm":txt(m)}</em><span><b>${Math.round(mx)}°</b> <em>${Math.round(mn)}°</em></span></div>`}
+  DN[k]=nm;html+=`<button class="day" data-k="${k}" aria-expanded="${hd===k}"><b>${nm}</b><i>${icon(m)}</i><em>${rn>.5?rn.toFixed(0)+" mm":txt(m)}</em><span><b>${Math.round(mx)}°</b> <em>${Math.round(mn)}°</em></span></button>`}
  $("days").innerHTML=html;hourly();
 }
 // controlli
-$("layers").onclick=e=>{const b=e.target.closest("button");if(!b)return;layer=b.dataset.l;if(layer==="fc"&&t<24)t=36;
+$("layers").onclick=e=>{const b=e.target.closest("button");if(!b)return;layer=b.dataset.l;if(layer==="fc"&&t>23)t=0;
  document.querySelectorAll("#layers button").forEach(x=>x.setAttribute("aria-pressed",x===b));legend();stop();setMode();update()};
 function legend(){const L=$("leg");
  if(layer==="fc"){L.style.background="linear-gradient(90deg,rgb(120,200,255),rgb(50,130,240),rgb(30,200,90),rgb(245,220,40),rgb(240,60,50))";$("l0").textContent="Debole";$("l1").textContent="Intensa"}
@@ -227,7 +249,7 @@ CITIES.forEach(([n],i)=>{const b=document.createElement("button");b.textContent=
 $("sl").oninput=e=>{stop();if(isRadar())rf=+e.target.value;else t=+e.target.value;update()};
 function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="▶"}}
 $("play").onclick=()=>{if(timer)return stop();$("play").textContent="❚❚";
- timer=setInterval(()=>{if(isRadar())rf=(rf+1)%FR.length;else t=(t+1)%96;update()},isRadar()?500:260)};
+ timer=setInterval(()=>{if(isRadar())rf=(rf+1)%FR.length;else t=(t+1)%(+$("sl").max+1);update()},isRadar()?500:260)};
 matchMedia("(prefers-color-scheme:dark)").addEventListener("change",()=>setBase());
 
 const API=(la,lo)=>"https://api.open-meteo.com/v1/forecast?latitude="+la+"&longitude="+lo+"&hourly=temperature_2m,precipitation,cloud_cover,wind_speed_10m,precipitation_probability&forecast_days=5&timezone=Europe%2FRome";
@@ -273,13 +295,14 @@ function gps(){
   ()=>msg("Posizione non consentita: abilitala nelle impostazioni del browser."),{timeout:10000});
 }
 $("go").onclick=search;$("q").onkeydown=e=>{if(e.key==="Enter")search()};$("gps").onclick=gps;
-let hd=0;
-for(let k=0;k<4;k++){const b=document.createElement("button"),dt=new Date(start.getTime()+k*864e5);
- b.textContent=k===0?"Oggi":k===1?"Domani":dt.toLocaleDateString("it-IT",{weekday:"short"});
- b.onclick=()=>{hd=k;hourly()};$("hseg").appendChild(b)}
+let hd=null;const DN=[];
+$("days").onclick=e=>{const b=e.target.closest(".day");if(!b)return;const k=+b.dataset.k;hd=hd===k?null:k;hourly();
+ document.querySelectorAll("#days .day").forEach(x=>x.setAttribute("aria-expanded",+x.dataset.k===hd));
+ if(hd!==null)$("hwrap").scrollIntoView({behavior:"smooth",block:"nearest"})};
 function hourly(){
  const[n,lo,la]=CITIES[sel],k=LIVE?PTS.findIndex(p=>p[0]===lo&&p[1]===la):-1,D=k>=0?LIVE[k]:null;let html="";
- document.querySelectorAll("#hseg button").forEach((b,i)=>b.setAttribute("aria-pressed",i===hd));
+ if(hd===null){$("hwrap").hidden=true;return}
+ $("hwrap").hidden=false;$("htitle").textContent="Ora per ora · "+(DN[hd]||"")+" · "+n;
  for(let hh=0;hh<24;hh++){
   const idx=hd*24+hh;let s,w="–",p="";
   if(D){s={temp:D.T[idx],rain:D.R[idx],cloud:D.C[idx]/100};if(D.W&&D.W[idx]!=null)w=Math.round(D.W[idx])+" km/h";if(D.P&&D.P[idx]!=null)p=D.P[idx]+"%"}
@@ -289,6 +312,59 @@ function hourly(){
   html+=`<div class="hr${idx===ROME?" cur":""}"><b>${String(hh).padStart(2,"0")}:00</b><i>${ic}</i><b>${Math.round(s.temp)}°</b><span>${s.rain>=.05?s.rain.toFixed(1)+" mm":"Asciutto"}${p?" · "+p:""}</span><em>${w}</em></div>`}
  $("hours").innerHTML=html;
 }
+
+const LV={2:["yellow","Giallo"],3:["orange","Arancione"],4:["red","Rosso"]};
+const TY={1:"Vento",2:"Neve/ghiaccio",3:"Temporali",4:"Nebbia",5:"Temperature alte",6:"Temperature basse",7:"Mareggiate",8:"Incendi boschivi",9:"Valanghe",10:"Pioggia",11:"Inondazioni",12:"Pioggia e inondazioni"};
+const norm=x=>(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+const RT=o=>({timeZone:"Europe/Rome",...o});
+const ymd=d=>new Intl.DateTimeFormat("sv-SE",RT({})).format(d);
+const hm=d=>d.toLocaleString("it-IT",RT({weekday:"short",hour:"2-digit",minute:"2-digit"}));
+const par=(i,n)=>((i.parameter||[]).find(p=>p.valueName===n)||{}).value||"";
+let aloc=null;
+function mk(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+function alertsGps(){
+ $("asub").textContent="Cerco la tua posizione…";
+ const fb=m=>{const c=CITIES[sel];aloc={lo:c[1],la:c[2],src:c[0]};loadAlerts(m)};
+ if(!navigator.geolocation)return fb("posizione non disponibile");
+ navigator.geolocation.getCurrentPosition(p=>{aloc={lo:p.coords.longitude,la:p.coords.latitude,src:"posizione"};loadAlerts()},()=>fb("posizione non consentita, uso "+CITIES[sel][0]),{timeout:10000});
+}
+async function loadAlerts(extra){
+ const{lo,la,src}=aloc;$("asub").textContent="Carico le allerte…";$("al0").replaceChildren();$("al1").replaceChildren();
+ let a={};
+ try{a=(await(await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=10&accept-language=it&lat="+la.toFixed(4)+"&lon="+lo.toFixed(4))).json()).address||{}}
+ catch(e){$("asub").textContent="Impossibile ricavare la zona dalla posizione.";return}
+ if(a.country_code!=="it"){$("asub").textContent="Le allerte sono disponibili solo per l’Italia (zona rilevata: "+(a.country||"sconosciuta")+").";return}
+ const toks=[...new Set([a.state,a.county,a.province,a.state_district].filter(Boolean).flatMap(c=>norm(c).replace(/provincia (autonoma )?di |citta metropolitana di /g,"").split(/[\/\-,]/).map(x=>x.trim()).filter(x=>x.length>3)))];
+ const inArea=z=>{const n=norm(z);return toks.some(t=>n.includes(t)||(n.length>3&&t.includes(n)))};
+ let list;
+ try{const r=await fetch("https://feeds.meteoalarm.org/api/v1/warnings/feeds-italy");if(!r.ok)throw 0;const j=await r.json();list=Array.isArray(j)?j:(j.warnings||[])}
+ catch(e){$("asub").textContent="Servizio allerte non raggiungibile. Consulta meteoalarm.org o meteoam.it.";return}
+ const items=[];
+ list.forEach(w=>{const al=w.alert||w;if(al.msgType==="Cancel")return;
+  const infos=[].concat(al.info||[]);if(!infos.length)return;
+  const info=infos.find(i=>/^it/i.test(i.language||""))||infos[0];
+  const areas=[...new Set([].concat(info.area||[]).map(x=>x.areaDesc).filter(Boolean))];
+  if(!areas.some(inArea))return;
+  const lv=parseInt(par(info,"awareness_level"))||0;if(lv<2)return;
+  const on=new Date(info.onset||info.effective||al.sent),ex=new Date(info.expires);
+  if(isNaN(on)||isNaN(ex))return;
+  items.push({lv,ty:parseInt(par(info,"awareness_type"))||0,on,ex,areas})});
+ $("asub").textContent="Zona: "+(a.state||"Italia")+" · "+(src==="posizione"?"dalla tua posizione":src)+(extra?" · "+extra:"");
+ for(let k=0;k<2;k++){
+  const d=new Date(Date.now()+k*864e5),day=ymd(d),box=$("al"+k);
+  $("ad"+k).textContent=(k?"Domani · ":"Oggi · ")+d.toLocaleDateString("it-IT",RT({weekday:"long",day:"numeric",month:"long"}));
+  const hit=items.filter(x=>ymd(x.on)<=day&&ymd(new Date(x.ex-1))>=day).sort((p,q)=>q.lv-p.lv);
+  if(!hit.length){const c=mk("div","al lv-green"),t=mk("div","top");t.append(mk("span","chip","Verde"),mk("b",null,"Nessuna allerta prevista"));c.append(t);box.append(c);continue}
+  hit.forEach(x=>{const c=mk("div","al lv-"+LV[x.lv][0]),t=mk("div","top");
+   t.append(mk("span","chip",LV[x.lv][1]),mk("b",null,TY[x.ty]||"Allerta meteo"));
+   c.append(t,mk("span",null,"Da "+hm(x.on)+" a "+hm(x.ex)),mk("span",null,"Zone: "+x.areas.join(", ")));box.append(c)});
+ }
+}
+$("agps").onclick=alertsGps;
+$("tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;const al=b.dataset.v==="all";
+ document.querySelectorAll("#tabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+ $("v-meteo").hidden=al;$("v-all").hidden=!al;
+ if(al){stop();if(!aloc)alertsGps()}else map.invalidateSize()};
 legend();update();load();loadRadar();
 </script>
 </body>
